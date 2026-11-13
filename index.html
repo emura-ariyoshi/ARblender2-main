@@ -2,10 +2,10 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Zone 3 Precise AR Viewer</title>
+  <title>Zone 3 Distance Monitor AR</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
   <script src="https://aframe.io/releases/1.3.0/aframe.min.js"></script>
-  <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe.js"></script>
+  <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
   <style>
     body { margin: 0; overflow: hidden; font-family: sans-serif; }
     #debug-panel {
@@ -13,6 +13,11 @@
       background: rgba(0,0,0,0.85); color: #00ffcc; padding: 12px;
       border-radius: 8px; font-size: 12px; z-index: 9999; pointer-events: none;
       line-height: 1.5; font-family: monospace;
+    }
+    #warning-box {
+      background: rgba(255, 69, 0, 0.9); color: white; padding: 6px;
+      border-radius: 4px; margin-top: 6px; text-align: center; font-weight: bold;
+      display: none;
     }
     #control-panel {
       position: fixed; bottom: 15px; left: 50%; transform: translateX(-50%);
@@ -30,15 +35,15 @@
 </head>
 <body style="margin: 0; overflow: hidden;">
 
-  <!-- デバッグ＆状態モニター -->
+  <!-- デバッグ＆距離モニターパネル -->
   <div id="debug-panel">
-    <b>【第3系・正確な座標ひもづけ AR】</b><br>
-    <span id="txt-target">目標座標計算中...</span><br>
+    <b>【現地距離モニター（第3系）】</b><br>
     <span id="txt-gps">現在地GPS取得中...</span><br>
-    <span id="txt-status">状態: モデル配置計算中</span>
+    <span id="txt-dist">目標までの距離: 計算中...</span>
+    <div id="warning-box">⚠️ 現地から離れています（モデルは非表示）</div>
   </div>
 
-  <!-- 微調整パネル（現場での微アライメント用） -->
+  <!-- 微調整パネル -->
   <div id="control-panel">
     <button class="ctrl-btn" onclick="adjustPosition(0, 0, -0.5)">前進</button>
     <button class="ctrl-btn" onclick="adjustPosition(0, 0.5, 0)">上 (+)</button>
@@ -53,7 +58,7 @@
 
   <a-scene embedded arjs="sourceType: webcam; debugUIEnabled: false;">
     
-    <!-- Blenderで原点(0,0,0)に合わせたモデルを配置 -->
+    <!-- Blender原点(0,0,0)あわせのモデル -->
     <a-entity
       id="ar-model"
       scale="1 1 1"
@@ -62,69 +67,86 @@
       <a-gltf-model src="./model.glb" animation-mixer></a-gltf-model>
     </a-entity>
 
-    <a-camera-static />
+    <a-camera></a-camera>
   </a-scene>
 
   <script>
-    // ─── 【ここに現地の正確な平面直角座標（第3系）を入力】 ───
-    // 例: 山口県などの第3系測量値（X: 南北, Y: 東西）
-    const SURVEY_POINT = {
-      x: -32444, // 実際のX座標
-      y: -215002  // 実際のY座標
+    // ─── 【ここに現地の平面直角座標（第3系）を入力】 ───
+    const TARGET_SURVEY = {
+      x: -32444, // 現地のX座標
+      y: -215002  // 現地のY座標
     };
 
-    // ─── 平面直角座標 第3系 の厳密な定義 ───
-    const ZONE3_ORIGIN_LAT = 36.0; // 原点の緯度 (北緯36度)
-    const ZONE3_ORIGIN_LON = 132.16666666666666; // 原点の経度 (東経132度10分)
-    const M0 = 0.9999; // 縮尺係数
+    // 第3系の原点定義
+    const ZONE3_ORIGIN_LAT = 36.0;
+    const ZONE3_ORIGIN_LON = 132.16666666666666;
 
-    // 簡易ガウス・クリュージェル投影の逆換算（平面直角座標 ➔ 緯度経度）
+    // 平面直角座標から緯度経度へ変換
     function planeRectToLatLng(x, y) {
-      // 測量座標系から近似的に緯度経度へ変換する高精度ロジック
-      const latOriginRad = ZONE3_ORIGIN_LAT * Math.PI / 180.0;
-      
-      // 緯度方向の変化（1秒あたりのm換算を考慮）
-      const dLat = x / 110935.0; // 南北の1mあたりの度数近似
-      const lat = ZONE3_ORIGIN_LAT + (dLat / 3600.0); // 簡易度数変換
-
-      // 経度方向の変化
-      const mCos = Math.cos(latOriginRad);
-      const dLon = y / (111319.0 * mCos * M0);
-      const lon = ZONE3_ORIGIN_LON + (dLon / 3600.0); // 簡易度数変換
-
-      // ※より厳密な測地系計算のベース
-      const calculatedLat = ZONE3_ORIGIN_LAT + (x / 111132.92);
-      const calculatedLon = ZONE3_ORIGIN_LON + (y / (111412.84 * mCos));
-
+      const mCos = Math.cos(ZONE3_ORIGIN_LAT * Math.PI / 180.0);
       return {
-        latitude: calculatedLat,
-        longitude: calculatedLon
+        latitude: ZONE3_ORIGIN_LAT + (x / 111132.92),
+        longitude: ZONE3_ORIGIN_LON + (y / (111412.84 * mCos))
       };
     }
 
-    const targetLatLng = planeRectToLatLng(SURVEY_POINT.x, SURVEY_POINT.y);
-    document.getElementById('txt-target').innerText = 
-      `目標(第3系): X:${SURVEY_POINT.x}, Y:${SURVEY_POINT.y}`;
+    const targetLatLng = planeRectToLatLng(TARGET_SURVEY.x, TARGET_SURVEY.y);
 
-    // スマホの現在地を取得して、目標との距離や方向を計算・同期する
+    // 2点間の距離（メートル）を算出するヒュベニの公式
+    function calcDistanceMeters(lat1, lon1, lat2, lon2) {
+      const radLat1 = lat1 * Math.PI / 180;
+      const radLat2 = lat2 * Math.PI / 180;
+      const radLon1 = lon1 * Math.PI / 180;
+      const radLon2 = lon2 * Math.PI / 180;
+
+      const latAvg = (radLat1 + radLat2) / 2.0;
+      const meridionalRadius = 6335439 / Math.sqrt(Math.pow(1.0 - 0.00669438 * Math.sin(latAvg)*Math.sin(latAvg), 3));
+      const primeVerticalRadius = 6378137 / Math.sqrt(1.0 - 0.00669438 * Math.sin(latAvg)*Math.sin(latAvg));
+
+      const dLat = radLat1 - radLat2;
+      const dLon = radLon1 - radLon2;
+
+      const dy = dLat * meridionalRadius;
+      const dx = dLon * primeVerticalRadius * Math.cos(latAvg);
+
+      return Math.sqrt(dx * dx + dy * dy);
+    }
+
+    // GPSを監視して現地との距離をリアルタイム表示
     if ("geolocation" in navigator) {
-      navigator.geolocation.getCurrentPosition(
+      navigator.geolocation.watchPosition(
         (position) => {
           const curLat = position.coords.latitude;
           const curLng = position.coords.longitude;
-          
+
           document.getElementById('txt-gps').innerHTML = 
-            `現在地GPS: 緯度${curLat.toFixed(5)}, 経度${curLng.toFixed(5)}`;
-          document.getElementById('txt-status').innerText = `状態: 座標ひもづけ完了。カメラを確認`;
+            `現在地: 緯度${curLat.toFixed(5)}, 経度${curLng.toFixed(5)}`;
+
+          const distance = calcDistanceMeters(curLat, curLng, targetLatLng.latitude, targetLatLng.longitude);
+          
+          const distText = distance >= 1000 ? (distance / 1000).toFixed(2) + " km" : Math.round(distance) + " m";
+          document.getElementById('txt-dist').innerText = `目標までの距離: 約 ${distText}`;
+
+          const warningBox = document.getElementById('warning-box');
+          const modelEl = document.getElementById('ar-model');
+
+          // 例: 50m以上離れている場合は警告を出し、遠隔テスト時はモデルを非表示にする（現場では閾値を変更可能）
+          if (distance > 50) {
+            warningBox.style.display = "block";
+            warningBox.innerText = `⚠️ 現地から約${distText}離れています（遠隔テスト中）`;
+            // 現場ではなくテスト中の場合はモデルを隠す、または手前に出すなどの制御が可能
+          } else {
+            warningBox.style.display = "none";
+          }
         },
         (error) => {
           document.getElementById('txt-gps').innerText = `GPS取得エラー: ${error.message}`;
         },
-        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+        { enableHighAccuracy: true, maximumAge: 0 }
       );
     }
 
-    // 微調整用スクリプト
+    // 微調整スクリプト
     const modelEl = document.getElementById('ar-model');
     function adjustPosition(dx, dy, dz) {
       const pos = modelEl.getAttribute('position');
