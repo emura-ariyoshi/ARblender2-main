@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Zone 3 Distance Monitor AR</title>
+  <title>第3系 現地ARビューア</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
   <script src="https://aframe.io/releases/1.3.0/aframe.min.js"></script>
   <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
@@ -10,18 +10,18 @@
     body { margin: 0; overflow: hidden; font-family: sans-serif; }
     #debug-panel {
       position: fixed; top: 10px; left: 10px; right: 10px;
-      background: rgba(0,0,0,0.85); color: #00ffcc; padding: 12px;
+      background: rgba(0, 0, 0, 0.85); color: #00ffcc; padding: 12px;
       border-radius: 8px; font-size: 12px; z-index: 9999; pointer-events: none;
       line-height: 1.5; font-family: monospace;
     }
     #warning-box {
-      background: rgba(255, 69, 0, 0.9); color: white; padding: 6px;
+      background: rgba(220, 50, 0, 0.9); color: white; padding: 6px;
       border-radius: 4px; margin-top: 6px; text-align: center; font-weight: bold;
       display: none;
     }
     #control-panel {
       position: fixed; bottom: 15px; left: 50%; transform: translateX(-50%);
-      background: rgba(255, 255, 255, 0.9); padding: 10px; border-radius: 12px;
+      background: rgba(255, 255, 255, 0.92); padding: 10px; border-radius: 12px;
       display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; z-index: 9999;
       box-shadow: 0 4px 10px rgba(0,0,0,0.3); width: 92%; max-width: 350px;
     }
@@ -33,132 +33,205 @@
     .ctrl-btn:active { background: #004080; }
   </style>
 </head>
-<body style="margin: 0; overflow: hidden;">
+<body>
 
-  <!-- デバッグ＆距離モニターパネル -->
+  <!-- ステータス＆距離モニター -->
   <div id="debug-panel">
-    <b>【現地距離モニター（第3系）】</b><br>
-    <span id="txt-gps">現在地GPS取得中...</span><br>
-    <span id="txt-dist">目標までの距離: 計算中...</span>
-    <div id="warning-box">⚠️ 現地から離れています（モデルは非表示）</div>
+    <b>【第3系 現地AR（X:-215002, Y:-32444, Z:0）】</b><br>
+    <span id="txt-target">目標緯度経度: 計算中...</span><br>
+    <span id="txt-gps">現在地GPS: 取得中...</span><br>
+    <span id="txt-dist">現地までの距離: 計算中...</span><br>
+    <span id="txt-offset">微調整オフセット: X:0.0m / Y(高):0.0m / Z:0.0m / 回転:0°</span>
+    <div id="warning-box">⚠️ 現地から離れています</div>
   </div>
 
-  <!-- 微調整パネル -->
+  <!-- 現地微調整パネル -->
   <div id="control-panel">
-    <button class="ctrl-btn" onclick="adjustPosition(0, 0, -0.5)">前進</button>
-    <button class="ctrl-btn" onclick="adjustPosition(0, 0.5, 0)">上 (+)</button>
-    <button class="ctrl-btn" onclick="adjustPosition(0, 0, 0.5)">後退</button>
-    <button class="ctrl-btn" onclick="adjustPosition(-0.5, 0, 0)">左</button>
-    <button class="ctrl-btn" onclick="adjustRotation(15)">回転 (+)</button>
-    <button class="ctrl-btn" onclick="adjustPosition(0.5, 0, 0)">右</button>
-    <button class="ctrl-btn" onclick="resetModel()">リセット</button>
-    <button class="ctrl-btn" onclick="adjustPosition(0, -0.5, 0)">下 (-)</button>
-    <button class="ctrl-btn" onclick="adjustRotation(-15)">回転 (-)</button>
+    <button class="ctrl-btn" onclick="adjustPosition(0, 0, -0.5)">前進 (-Z)</button>
+    <button class="ctrl-btn" onclick="adjustPosition(0, 0.2, 0)">上 (+20cm)</button>
+    <button class="ctrl-btn" onclick="adjustPosition(0, 0, 0.5)">後退 (+Z)</button>
+    <button class="ctrl-btn" onclick="adjustPosition(-0.5, 0, 0)">左 (-X)</button>
+    <button class="ctrl-btn" onclick="adjustRotation(5)">回転 (+5°)</button>
+    <button class="ctrl-btn" onclick="adjustPosition(0.5, 0, 0)">右 (+X)</button>
+    <button class="ctrl-btn" onclick="resetModel()">位置リセット</button>
+    <button class="ctrl-btn" onclick="adjustPosition(0, -0.2, 0)">下 (-20cm)</button>
+    <button class="ctrl-btn" onclick="adjustRotation(-5)">回転 (-5°)</button>
   </div>
 
   <a-scene embedded arjs="sourceType: webcam; debugUIEnabled: false;">
-    
-    <!-- Blender原点(0,0,0)あわせのモデル -->
-    <a-entity
-      id="ar-model"
-      scale="1 1 1"
-      rotation="0 0 0"
-      position="0 0 -3">
-      <a-gltf-model src="./model.glb" animation-mixer></a-gltf-model>
+    <!-- 親アンカー（GPS位置同期用） -->
+    <a-entity id="gps-anchor" position="0 0 -3">
+      <!-- Blenderワールド原点(0,0,0)モデル（ボタン微調整用） -->
+      <a-entity id="ar-model" scale="1 1 1" rotation="0 0 0" position="0 0 0">
+        <a-gltf-model src="./model.glb" animation-mixer></a-gltf-model>
+      </a-entity>
     </a-entity>
 
     <a-camera></a-camera>
   </a-scene>
 
   <script>
-    // ─── 【ここに現地の平面直角座標（第3系）を入力】 ───
-    const TARGET_SURVEY = {
-      x: -215002, // 現地のX座標
-      y: -32444  // 現地のY座標
+    // ─── 1. 目標とする平面直角座標（第3系） ───
+    // 測量座標: X = 南北方向(m), Y = 東西方向(m), Z = 高さ基準(0m)
+    const TARGET_ZONE3 = {
+      x: -215002.0,
+      y: -32444.0,
+      z: 0.0
     };
 
-    // 第3系の原点定義
-    const ZONE3_ORIGIN_LAT = 36.0;
-    const ZONE3_ORIGIN_LON = 132.16666666666666;
+    // ─── 2. 平面直角座標 第3系 ➔ 緯度・経度 高精度逆換算（GRS80楕円体） ───
+    function zone3ToLatLon(x, y) {
+      const phi0 = 36.0 * Math.PI / 180.0;             // 第3系原点緯度: 北緯36度
+      const lambda0 = (132.0 + 10.0 / 60.0) * Math.PI / 180.0; // 第3系原点経度: 東経132度10分
+      const m0 = 0.9999;                               // 縮尺係数
+      const a = 6378137.0;                             // GRS80 長半径
+      const f = 1.0 / 298.257222101;                   // GRS80 扁平率
+      const n = f / (2.0 - f);
 
-    // 平面直角座標から緯度経度へ変換
-    function planeRectToLatLng(x, y) {
-      const mCos = Math.cos(ZONE3_ORIGIN_LAT * Math.PI / 180.0);
+      const A0 = 1.0 + (n * n) / 4.0 + Math.pow(n, 4) / 64.0;
+      const A1 = -1.5 * n + (9.0 / 16.0) * Math.pow(n, 3);
+      const A2 = (15.0 / 16.0) * (n * n) - (15.0 / 32.0) * Math.pow(n, 4);
+      const A3 = -(35.0 / 48.0) * Math.pow(n, 3);
+      const A4 = (315.0 / 512.0) * Math.pow(n, 4);
+
+      const A_bar = (a / (1.0 + n)) * A0;
+      const S0 = (a / (1.0 + n)) * (
+        A0 * phi0 +
+        A1 * Math.sin(2.0 * phi0) +
+        A2 * Math.sin(4.0 * phi0) +
+        A3 * Math.sin(6.0 * phi0) +
+        A4 * Math.sin(8.0 * phi0)
+      );
+
+      const xi = (x + m0 * S0) / (m0 * A_bar);
+      const eta = y / (m0 * A_bar);
+
+      const b1 = 0.5 * n - (2.0 / 3.0) * (n * n) + (37.0 / 96.0) * Math.pow(n, 3) - (1.0 / 360.0) * Math.pow(n, 4);
+      const b2 = (1.0 / 48.0) * (n * n) + (1.0 / 15.0) * Math.pow(n, 3) - (437.0 / 1440.0) * Math.pow(n, 4);
+      const b3 = (17.0 / 480.0) * Math.pow(n, 3) - (37.0 / 840.0) * Math.pow(n, 4);
+      const b4 = (4397.0 / 161280.0) * Math.pow(n, 4);
+
+      const xi_p = xi - (
+        b1 * Math.sin(2.0 * xi) * Math.cosh(2.0 * eta) +
+        b2 * Math.sin(4.0 * xi) * Math.cosh(4.0 * eta) +
+        b3 * Math.sin(6.0 * xi) * Math.cosh(6.0 * eta) +
+        b4 * Math.sin(8.0 * xi) * Math.cosh(8.0 * eta)
+      );
+      const eta_p = eta - (
+        b1 * Math.cos(2.0 * xi) * Math.sinh(2.0 * eta) +
+        b2 * Math.cos(4.0 * xi) * Math.sinh(4.0 * eta) +
+        b3 * Math.cos(6.0 * xi) * Math.sinh(6.0 * eta) +
+        b4 * Math.cos(8.0 * xi) * Math.sinh(8.0 * eta)
+      );
+
+      const chi = Math.asin(Math.sin(xi_p) / Math.cosh(eta_p));
+
+      const d1 = 2.0 * n - (2.0 / 3.0) * (n * n) - 2.0 * Math.pow(n, 3) + (116.0 / 45.0) * Math.pow(n, 4);
+      const d2 = (7.0 / 3.0) * (n * n) - (8.0 / 5.0) * Math.pow(n, 3) - (227.0 / 45.0) * Math.pow(n, 4);
+      const d3 = (56.0 / 15.0) * Math.pow(n, 3) - (136.0 / 35.0) * Math.pow(n, 4);
+      const d4 = (4279.0 / 630.0) * Math.pow(n, 4);
+
+      const phi = chi +
+        d1 * Math.sin(2.0 * chi) +
+        d2 * Math.sin(4.0 * chi) +
+        d3 * Math.sin(6.0 * chi) +
+        d4 * Math.sin(8.0 * chi);
+
+      const lambda = lambda0 + Math.atan2(Math.sinh(eta_p), Math.cos(xi_p));
+
       return {
-        latitude: ZONE3_ORIGIN_LAT + (x / 111132.92),
-        longitude: ZONE3_ORIGIN_LON + (y / (111412.84 * mCos))
+        latitude: phi * 180.0 / Math.PI,
+        longitude: lambda * 180.0 / Math.PI
       };
     }
 
-    const targetLatLng = planeRectToLatLng(TARGET_SURVEY.x, TARGET_SURVEY.y);
+    const targetLatLon = zone3ToLatLon(TARGET_ZONE3.x, TARGET_ZONE3.y);
+    document.getElementById('txt-target').innerText =
+      `目標位置: 北緯${targetLatLon.latitude.toFixed(6)}°, 東経${targetLatLon.longitude.toFixed(6)}°`;
 
-    // 2点間の距離（メートル）を算出するヒュベニの公式
-    function calcDistanceMeters(lat1, lon1, lat2, lon2) {
-      const radLat1 = lat1 * Math.PI / 180;
-      const radLat2 = lat2 * Math.PI / 180;
-      const radLon1 = lon1 * Math.PI / 180;
-      const radLon2 = lon2 * Math.PI / 180;
+    // ─── 3. 現在地からの相対距離・方位オフセット計算 ───
+    function getRelativeOffsetMeters(curLat, curLon, tgtLat, tgtLon) {
+      const avgLatRad = ((curLat + tgtLat) / 2.0) * Math.PI / 180.0;
+      const mPerDegLat = 111132.92 - 559.82 * Math.cos(2 * avgLatRad) + 1.175 * Math.cos(4 * avgLatRad);
+      const mPerDegLon = 111412.84 * Math.cos(avgLatRad) - 93.5 * Math.cos(3 * avgLatRad);
 
-      const latAvg = (radLat1 + radLat2) / 2.0;
-      const meridionalRadius = 6335439 / Math.sqrt(Math.pow(1.0 - 0.00669438 * Math.sin(latAvg)*Math.sin(latAvg), 3));
-      const primeVerticalRadius = 6378137 / Math.sqrt(1.0 - 0.00669438 * Math.sin(latAvg)*Math.sin(latAvg));
+      const northMeters = (tgtLat - curLat) * mPerDegLat; // 北がプラス
+      const eastMeters  = (tgtLon - curLon) * mPerDegLon; // 東がプラス
+      const distance = Math.sqrt(northMeters * northMeters + eastMeters * eastMeters);
 
-      const dLat = radLat1 - radLat2;
-      const dLon = radLon1 - radLon2;
-
-      const dy = dLat * meridionalRadius;
-      const dx = dLon * primeVerticalRadius * Math.cos(latAvg);
-
-      return Math.sqrt(dx * dx + dy * dy);
+      return { northMeters, eastMeters, distance };
     }
 
-    // GPSを監視して現地との距離をリアルタイム表示
+    // ─── 4. GPS監視とモデル配置更新 ───
+    const anchorEl = document.getElementById('gps-anchor');
+    const warningBox = document.getElementById('warning-box');
+    const SITE_RANGE_METERS = 100.0; // 100m以内に入ったら現地の実座標へ自動配置
+
     if ("geolocation" in navigator) {
       navigator.geolocation.watchPosition(
-        (position) => {
-          const curLat = position.coords.latitude;
-          const curLng = position.coords.longitude;
+        (pos) => {
+          const curLat = pos.coords.latitude;
+          const curLon = pos.coords.longitude;
+          const acc = Math.round(pos.coords.accuracy);
 
-          document.getElementById('txt-gps').innerHTML = 
-            `現在地: 緯度${curLat.toFixed(5)}, 経度${curLng.toFixed(5)}`;
+          document.getElementById('txt-gps').innerText =
+            `現在地GPS: 北緯${curLat.toFixed(6)}°, 東経${curLon.toFixed(6)}° (誤差±${acc}m)`;
 
-          const distance = calcDistanceMeters(curLat, curLng, targetLatLng.latitude, targetLatLng.longitude);
-          
-          const distText = distance >= 1000 ? (distance / 1000).toFixed(2) + " km" : Math.round(distance) + " m";
-          document.getElementById('txt-dist').innerText = `目標までの距離: 約 ${distText}`;
+          const rel = getRelativeOffsetMeters(curLat, curLon, targetLatLon.latitude, targetLatLon.longitude);
+          const distStr = rel.distance >= 1000
+            ? (rel.distance / 1000).toFixed(2) + " km"
+            : rel.distance.toFixed(1) + " m";
 
-          const warningBox = document.getElementById('warning-box');
-          const modelEl = document.getElementById('ar-model');
+          document.getElementById('txt-dist').innerText =
+            `現地までの距離: 約 ${distStr} (北へ${rel.northMeters.toFixed(1)}m / 東へ${rel.eastMeters.toFixed(1)}m)`;
 
-          // 例: 50m以上離れている場合は警告を出し、遠隔テスト時はモデルを非表示にする（現場では閾値を変更可能）
-          if (distance > 50) {
-            warningBox.style.display = "block";
-            warningBox.innerText = `⚠️ 現地から約${distText}離れています（遠隔テスト中）`;
-            // 現場ではなくテスト中の場合はモデルを隠す、または手前に出すなどの制御が可能
-          } else {
+          if (rel.distance <= SITE_RANGE_METERS) {
+            // 現地圏内：現在地からの正確な相対距離（東=+X, 北=-Z）にBlender原点を配置
             warningBox.style.display = "none";
+            anchorEl.setAttribute('position', {
+              x: rel.eastMeters,
+              y: TARGET_ZONE3.z, // Z=0（カメラ高さ基準。ボタンで微調整）
+              z: -rel.northMeters
+            });
+          } else {
+            // 現地から離れている場合：警告を表示し、テスト用に目の前(3m先)へ仮配置
+            warningBox.style.display = "block";
+            warningBox.innerText = `⚠️ 現地から約${distStr}離れています（テスト用に目の前3mに仮表示中）`;
+            anchorEl.setAttribute('position', { x: 0, y: 0, z: -3 });
           }
         },
-        (error) => {
-          document.getElementById('txt-gps').innerText = `GPS取得エラー: ${error.message}`;
+        (err) => {
+          document.getElementById('txt-gps').innerText = `GPSエラー: ${err.message}`;
         },
         { enableHighAccuracy: true, maximumAge: 0 }
       );
     }
 
-    // 微調整スクリプト
+    // ─── 5. 微調整コントロール ───
     const modelEl = document.getElementById('ar-model');
+    function updateOffsetLabel() {
+      const p = modelEl.getAttribute('position');
+      const r = modelEl.getAttribute('rotation');
+      document.getElementById('txt-offset').innerText =
+        `微調整: 東西${p.x.toFixed(1)}m / 高さ${p.y.toFixed(1)}m / 南北${p.z.toFixed(1)}m / 回転${Math.round(r.y)}°`;
+    }
+
     function adjustPosition(dx, dy, dz) {
       const pos = modelEl.getAttribute('position');
       modelEl.setAttribute('position', { x: pos.x + dx, y: pos.y + dy, z: pos.z + dz });
+      updateOffsetLabel();
     }
+
     function adjustRotation(ddeg) {
       const rot = modelEl.getAttribute('rotation');
       modelEl.setAttribute('rotation', { x: rot.x, y: rot.y + ddeg, z: rot.z });
+      updateOffsetLabel();
     }
+
     function resetModel() {
-      modelEl.setAttribute('position', {x: 0, y: 0, z: -3});
-      modelEl.setAttribute('rotation', {x: 0, y: 0, z: 0});
+      modelEl.setAttribute('position', { x: 0, y: 0, z: 0 });
+      modelEl.setAttribute('rotation', { x: 0, y: 0, z: 0 });
+      updateOffsetLabel();
     }
   </script>
 </body>
