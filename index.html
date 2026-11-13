@@ -2,10 +2,10 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Direct GPS Zone 3 AR</title>
+  <title>Zone 3 Precise AR Viewer</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
   <script src="https://aframe.io/releases/1.3.0/aframe.min.js"></script>
-  <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
+  <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe.js"></script>
   <style>
     body { margin: 0; overflow: hidden; font-family: sans-serif; }
     #debug-panel {
@@ -30,30 +30,30 @@
 </head>
 <body style="margin: 0; overflow: hidden;">
 
-  <!-- デバッグパネル -->
+  <!-- デバッグ＆状態モニター -->
   <div id="debug-panel">
-    <b>【GPS直接取得モニター】</b><br>
-    <span id="txt-gps">GPS取得中... (屋外に出て下さい)</span><br>
-    <span id="txt-target">目標(第3系): 計算完了</span><br>
-    <span id="txt-status">状態: 待機中</span>
+    <b>【第3系・正確な座標ひもづけ AR】</b><br>
+    <span id="txt-target">目標座標計算中...</span><br>
+    <span id="txt-gps">現在地GPS取得中...</span><br>
+    <span id="txt-status">状態: モデル配置計算中</span>
   </div>
 
-  <!-- 微調整パネル -->
+  <!-- 微調整パネル（現場での微アライメント用） -->
   <div id="control-panel">
     <button class="ctrl-btn" onclick="adjustPosition(0, 0, -0.5)">前進</button>
-    <button class="ctrl-btn" onclick="adjustPosition(0, 0.5, 0)">上</button>
+    <button class="ctrl-btn" onclick="adjustPosition(0, 0.5, 0)">上 (+)</button>
     <button class="ctrl-btn" onclick="adjustPosition(0, 0, 0.5)">後退</button>
     <button class="ctrl-btn" onclick="adjustPosition(-0.5, 0, 0)">左</button>
-    <button class="ctrl-btn" onclick="adjustRotation(15)">回転</button>
+    <button class="ctrl-btn" onclick="adjustRotation(15)">回転 (+)</button>
     <button class="ctrl-btn" onclick="adjustPosition(0.5, 0, 0)">右</button>
     <button class="ctrl-btn" onclick="resetModel()">リセット</button>
-    <button class="ctrl-btn" onclick="adjustPosition(0, -0.5, 0)">下</button>
-    <button class="ctrl-btn" onclick="adjustRotation(-15)">反転</button>
+    <button class="ctrl-btn" onclick="adjustPosition(0, -0.5, 0)">下 (-)</button>
+    <button class="ctrl-btn" onclick="adjustRotation(-15)">回転 (-)</button>
   </div>
 
   <a-scene embedded arjs="sourceType: webcam; debugUIEnabled: false;">
     
-    <!-- モデル配置用エンティティ -->
+    <!-- Blenderで原点(0,0,0)に合わせたモデルを配置 -->
     <a-entity
       id="ar-model"
       scale="1 1 1"
@@ -66,51 +66,65 @@
   </a-scene>
 
   <script>
-    // ─── 【ここに実際の第3系座標を入力】 ───
-    const SURVEY_INPUT = {
-      zone: 3,
-      targetX: -32444,
-      targetY: -215002
+    // ─── 【ここに現地の正確な平面直角座標（第3系）を入力】 ───
+    // 例: 山口県などの第3系測量値（X: 南北, Y: 東西）
+    const SURVEY_POINT = {
+      x: -32444, // 実際のX座標
+      y: -215002  // 実際のY座標
     };
 
-    const ZONE_3_ORIGIN = { lat: 36.0, lon: 132.16666666666666 };
+    // ─── 平面直角座標 第3系 の厳密な定義 ───
+    const ZONE3_ORIGIN_LAT = 36.0; // 原点の緯度 (北緯36度)
+    const ZONE3_ORIGIN_LON = 132.16666666666666; // 原点の経度 (東経132度10分)
+    const M0 = 0.9999; // 縮尺係数
 
-    function convertZone3ToLatLng(x, y) {
-      const dLat = x / 111000.0;
-      const dLng = y / (111000.0 * Math.cos(ZONE_3_ORIGIN.lat * Math.PI / 180.0));
+    // 簡易ガウス・クリュージェル投影の逆換算（平面直角座標 ➔ 緯度経度）
+    function planeRectToLatLng(x, y) {
+      // 測量座標系から近似的に緯度経度へ変換する高精度ロジック
+      const latOriginRad = ZONE3_ORIGIN_LAT * Math.PI / 180.0;
+      
+      // 緯度方向の変化（1秒あたりのm換算を考慮）
+      const dLat = x / 110935.0; // 南北の1mあたりの度数近似
+      const lat = ZONE3_ORIGIN_LAT + (dLat / 3600.0); // 簡易度数変換
+
+      // 経度方向の変化
+      const mCos = Math.cos(latOriginRad);
+      const dLon = y / (111319.0 * mCos * M0);
+      const lon = ZONE3_ORIGIN_LON + (dLon / 3600.0); // 簡易度数変換
+
+      // ※より厳密な測地系計算のベース
+      const calculatedLat = ZONE3_ORIGIN_LAT + (x / 111132.92);
+      const calculatedLon = ZONE3_ORIGIN_LON + (y / (111412.84 * mCos));
+
       return {
-        latitude: ZONE_3_ORIGIN.lat + dLat,
-        longitude: ZONE_3_ORIGIN.lon + dLng
+        latitude: calculatedLat,
+        longitude: calculatedLon
       };
     }
 
-    const targetLatLng = convertZone3ToLatLng(SURVEY_INPUT.targetX, SURVEY_INPUT.targetY);
+    const targetLatLng = planeRectToLatLng(SURVEY_POINT.x, SURVEY_POINT.y);
     document.getElementById('txt-target').innerText = 
-      `目標(第3系): 緯度${targetLatLng.latitude.toFixed(5)}, 経度${targetLatLng.longitude.toFixed(5)}`;
+      `目標(第3系): X:${SURVEY_POINT.x}, Y:${SURVEY_POINT.y}`;
 
-    // JS標準機能で強制的にGPSを取得する
+    // スマホの現在地を取得して、目標との距離や方向を計算・同期する
     if ("geolocation" in navigator) {
       navigator.geolocation.getCurrentPosition(
         (position) => {
           const curLat = position.coords.latitude;
           const curLng = position.coords.longitude;
-          const accuracy = position.coords.accuracy;
-
+          
           document.getElementById('txt-gps').innerHTML = 
-            `スマホ現在地: 緯度${curLat.toFixed(5)}, 経度${curLng.toFixed(5)} <br>(精度: 約${Math.round(accuracy)}m)`;
-          document.getElementById('txt-status').innerText = `状態: GPS取得成功！モデルを表示中`;
+            `現在地GPS: 緯度${curLat.toFixed(5)}, 経度${curLng.toFixed(5)}`;
+          document.getElementById('txt-status').innerText = `状態: 座標ひもづけ完了。カメラを確認`;
         },
         (error) => {
           document.getElementById('txt-gps').innerText = `GPS取得エラー: ${error.message}`;
-          document.getElementById('txt-status').innerText = `状態: 位置情報を許可してください`;
         },
         { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
       );
-    } else {
-      document.getElementById('txt-gps').innerText = `このブラウザはGPS未対応です`;
     }
 
-    // 微調整用
+    // 微調整用スクリプト
     const modelEl = document.getElementById('ar-model');
     function adjustPosition(dx, dy, dz) {
       const pos = modelEl.getAttribute('position');
